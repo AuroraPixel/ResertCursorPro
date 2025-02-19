@@ -30,7 +30,6 @@ ENV/
 # PyInstaller
 build/
 dist/
-ResertCursorPro.spec
 
 # IDE
 .idea/
@@ -47,8 +46,6 @@ logs/
 *.log
 
 # Project specific
-resources/cursor_accounts.json
-resources/icon.icns
 src/components/__pycache__/
 src/views/__pycache__/
 
