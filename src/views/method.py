@@ -8,11 +8,22 @@ from PyQt6.QtWidgets import (
     QFrame, QMessageBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 
 from components.reset_machine import MachineIDResetter
 from components.exit_cursor import ExitCursor
 from components.account_switcher import AccountSwitcher
+
+def get_resource_path(relative_path):
+    """获取资源文件的绝对路径"""
+    if getattr(sys, 'frozen', False):
+        # 如果是打包后的环境
+        base_path = sys._MEIPASS
+    else:
+        # 如果是开发环境
+        base_path = os.path.abspath(".")
+    
+    return os.path.join(base_path, relative_path)
 
 class LogArea(QTextEdit):
     def __init__(self):
@@ -139,8 +150,12 @@ class MethodWindow(QMainWindow):
         self.setup_ui()
     
     def setup_ui(self):
-        self.setWindowTitle("Cursor Tool")
+        self.setWindowTitle("ResertCursorPro")
         self.setMinimumSize(800, 600)
+        
+        # 设置窗口图标
+        icon_path = get_resource_path('resources/icon.ico')
+        self.setWindowIcon(QIcon(icon_path))
         
         # 创建中央部件
         central_widget = QWidget()
@@ -155,7 +170,7 @@ class MethodWindow(QMainWindow):
         left_layout.setSpacing(20)
         
         # 添加 CURSOR 标题
-        title_label = QLabel("CURSOR")
+        title_label = QLabel("ResertCursorPro")
         title_label.setFont(QFont('Arial', 24, QFont.Weight.Bold))
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         left_layout.addWidget(title_label)

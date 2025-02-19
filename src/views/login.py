@@ -3,7 +3,20 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QMessageBox
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
+import os
+import sys
+
+def get_resource_path(relative_path):
+    """获取资源文件的绝对路径"""
+    if getattr(sys, 'frozen', False):
+        # 如果是打包后的环境
+        base_path = sys._MEIPASS
+    else:
+        # 如果是开发环境
+        base_path = os.path.abspath(".")
+    
+    return os.path.join(base_path, relative_path)
 
 class LoginWindow(QMainWindow):
     def __init__(self, on_login_success):
@@ -14,6 +27,10 @@ class LoginWindow(QMainWindow):
     def setup_ui(self):
         self.setWindowTitle("ResertCursorPro")
         self.setFixedSize(400, 300)
+        
+        # 设置窗口图标
+        icon_path = get_resource_path('resources/icon.ico')
+        self.setWindowIcon(QIcon(icon_path))
         
         # 创建中央部件
         central_widget = QWidget()

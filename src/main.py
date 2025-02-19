@@ -10,13 +10,30 @@ if os.path.exists('/opt/homebrew/opt/qt/lib'):
     os.environ['DYLD_FRAMEWORK_PATH'] = '/opt/homebrew/opt/qt/lib'
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QIcon
 from views.login import LoginWindow
 from views.method import MethodWindow
+
+def get_resource_path(relative_path):
+    """获取资源文件的绝对路径"""
+    if getattr(sys, 'frozen', False):
+        # 如果是打包后的环境
+        base_path = sys._MEIPASS
+    else:
+        # 如果是开发环境
+        base_path = os.path.abspath(".")
+    
+    return os.path.join(base_path, relative_path)
 
 class Application:
     def __init__(self):
         self.app = QApplication(sys.argv)
         self.app.setStyle("Fusion")
+        
+        # 设置应用程序图标
+        icon_path = get_resource_path('resources/icon.ico')
+        icon = QIcon(icon_path)
+        self.app.setWindowIcon(icon)
         
         # 创建登录窗口
         self.login_window = LoginWindow(self.on_login_success)

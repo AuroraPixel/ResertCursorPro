@@ -1,12 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+
 block_cipher = None
 
 a = Analysis(
     ['src/main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('resources', 'resources')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -36,7 +38,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='resources/icon.icns'
+    icon=['resources/icon.ico', 'resources/icon.icns'] if sys.platform == 'darwin' else 'resources/icon.ico'
 )
 
 coll = COLLECT(
@@ -53,7 +55,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='ResertCursorPro.app',
-    icon='resources/icon.icns',
+    icon='resources/icon.icns' if sys.platform == 'darwin' else 'resources/icon.ico',
     bundle_identifier='com.resertcursorpro.app',
     info_plist={
         'CFBundleShortVersionString': '1.0.0',
