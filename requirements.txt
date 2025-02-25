@@ -10,6 +10,10 @@ pyarmor==9.0.8
 # Utilities
 colorama==0.4.6
 psutil==5.9.8
+requests==2.31.0
+PyJWT==2.8.0
+DrissionPage
+python-dotenv
 
 # Development Tools (Optional)
 black==24.1.1

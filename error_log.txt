@@ -1,0 +1,10 @@
+未捕获的异常: Traceback (most recent call last):
+  File "/Users/hljy/workspace_wang/ResertCursorPro/src/main.py", line 129, in <module>
+    main()
+  File "/Users/hljy/workspace_wang/ResertCursorPro/src/main.py", line 119, in main
+    exit_code = app.run()
+                ^^^^^^^^^
+  File "/Users/hljy/workspace_wang/ResertCursorPro/src/main.py", line 109, in run
+    return self.app.exec()
+           ^^^^^^^^^^^^^^^
+KeyboardInterrupt

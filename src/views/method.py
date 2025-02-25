@@ -1,18 +1,24 @@
 from datetime import datetime
 import sys
 import os
+import asyncio
 from io import StringIO
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTextEdit, QLineEdit,
-    QFrame, QMessageBox
+    QFrame, QMessageBox, QDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon
+import time
 
-from components.reset_machine import MachineIDResetter
-from components.exit_cursor import ExitCursor
-from components.account_switcher import AccountSwitcher
+from src.components.reset_machine import MachineIDResetter
+from src.components.exit_cursor import ExitCursor
+from src.components.account_switcher import AccountSwitcher
+from src.components.register_account import AccountRegister
+from src.components.account_service import AccountService
+from src.views.account_dialog import AccountDialog
+from src.components.logger import logger, set_ui_log_callback
 
 def get_resource_path(relative_path):
     """获取资源文件的绝对路径"""
@@ -141,13 +147,112 @@ class RestoreThread(QThread):
             sys.stdout = original_stdout
             output_buffer.close()
 
+class GetAccountThread(QThread):
+    log_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(bool)
+
+    def __init__(self):
+        super().__init__()
+        # 设置UI日志回调
+        set_ui_log_callback(self.handle_log)
+
+    def handle_log(self, log_entry):
+        """处理来自logger的日志"""
+        # 提取日志消息部分
+        if " - INFO: " in log_entry:
+            message = log_entry.split(" - INFO: ")[1]
+            # 只发送包含Step的日志
+            if "Step" in message:
+                self.log_signal.emit(message)
+        elif " - ERROR: " in log_entry:
+            message = log_entry.split(" - ERROR: ")[1]
+            self.log_signal.emit(f"❌ {message}")
+        elif " - WARNING: " in log_entry:
+            message = log_entry.split(" - WARNING: ")[1]
+            self.log_signal.emit(f"⚠️ {message}")
+
+    def run(self):
+        max_retries = 3
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                retry_count += 1
+                self.log_signal.emit(f"\n=== 第 {retry_count} 次尝试 ===")
+                
+                # 创建账号注册器
+                register = AccountRegister()
+                
+                # 注册账号
+                self.log_signal.emit("开始获取新账号...")
+                success = asyncio.run(register.register_single_account())
+                
+                if success:
+                    self.log_signal.emit("✅ 账号注册成功")
+                    
+                    # 上传账号信息
+                    self.log_signal.emit("\n正在上传账号信息...")
+                    account_service = AccountService()
+                    
+                    # 创建账号信息
+                    account_info = {
+                        "email": register.account,
+                        "email_password": register.email_password,
+                        "cursor_password": register.cursor_password,
+                        "access_token": register.cursor_token,
+                        "refresh_token": register.cursor_token  # 这里使用相同的token
+                    }
+                    
+                    upload_success, error_msg = account_service.upload_account(account_info)
+                    
+                    if upload_success:
+                        self.log_signal.emit("✅ 账号信息上传成功")
+                        self.finished_signal.emit(True)
+                        return
+                    else:
+                        self.log_signal.emit(f"❌ 账号信息上传失败: {error_msg}")
+                        # 如果是最后一次尝试，则返回失败
+                        if retry_count >= max_retries:
+                            self.finished_signal.emit(False)
+                            return
+                else:
+                    self.log_signal.emit("❌ 账号注册失败")
+                    # 如果是最后一次尝试，则返回失败
+                    if retry_count >= max_retries:
+                        self.log_signal.emit(f"\n=== 已达到最大重试次数 ({max_retries} 次)，操作失败 ===")
+                        self.finished_signal.emit(False)
+                        return
+                    else:
+                        self.log_signal.emit("等待 5 秒后进行下一次尝试...")
+                        time.sleep(5)
+
+            except Exception as e:
+                self.log_signal.emit(f"❌ 获取账号过程出错: {str(e)}")
+                # 如果是最后一次尝试，则返回失败
+                if retry_count >= max_retries:
+                    self.log_signal.emit(f"\n=== 已达到最大重试次数 ({max_retries} 次)，操作失败 ===")
+                    self.finished_signal.emit(False)
+                    return
+                else:
+                    self.log_signal.emit("等待 5 秒后进行下一次尝试...")
+                    time.sleep(5)
+
+        # 如果所有重试都失败了
+        self.log_signal.emit(f"\n=== 所有重试都失败了 ({max_retries} 次) ===")
+        self.finished_signal.emit(False)
+
 class MethodWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.reset_thread = None
         self.restore_thread = None
+        self.get_account_thread = None
         self.cursor_path = None
+        self.code_info = None
         self.setup_ui()
+        
+        # 获取激活码信息
+        self.fetch_code_info()
     
     def setup_ui(self):
         self.setWindowTitle("ResertCursorPro")
@@ -208,19 +313,33 @@ class MethodWindow(QMainWindow):
         btn_layout = QVBoxLayout(btn_container)
         btn_layout.setSpacing(15)
         
-        # 重置机器码按钮
-        self.reset_btn = QPushButton("重置机器码")
-        self.reset_btn.setMinimumHeight(50)
-        self.reset_btn.setStyleSheet(self.get_button_style())
-        self.reset_btn.clicked.connect(self.reset_machine_code)
-        btn_layout.addWidget(self.reset_btn)
-        
         # 恢复备份按钮
         self.restore_btn = QPushButton("恢复备份")
         self.restore_btn.setMinimumHeight(50)
         self.restore_btn.setStyleSheet(self.get_button_style("warning"))
         self.restore_btn.clicked.connect(self.restore_backup)
         btn_layout.addWidget(self.restore_btn)
+        
+        # 在按钮容器中添加获取账号按钮
+        self.get_account_btn = QPushButton("获取账号")
+        self.get_account_btn.setMinimumHeight(50)
+        self.get_account_btn.setStyleSheet(self.get_button_style("primary"))
+        self.get_account_btn.clicked.connect(self.get_account)
+        btn_layout.addWidget(self.get_account_btn)
+        
+        # 添加切换账号按钮
+        self.switch_account_btn = QPushButton("切换账号")
+        self.switch_account_btn.setMinimumHeight(50)
+        self.switch_account_btn.setStyleSheet(self.get_button_style("info"))
+        self.switch_account_btn.clicked.connect(self.show_account_dialog)
+        btn_layout.addWidget(self.switch_account_btn)
+        
+        # 添加激活码信息按钮
+        self.code_info_btn = QPushButton("激活码信息")
+        self.code_info_btn.setMinimumHeight(50)
+        self.code_info_btn.setStyleSheet(self.get_button_style("warning"))
+        self.code_info_btn.clicked.connect(self.show_code_info_dialog)
+        btn_layout.addWidget(self.code_info_btn)
         
         left_layout.addWidget(btn_container, alignment=Qt.AlignmentFlag.AlignCenter)
         left_layout.addStretch()
@@ -303,32 +422,27 @@ class MethodWindow(QMainWindow):
                     background-color: #BDBDBD;
                 }
             """
-    
-    def reset_machine_code(self):
-        # Windows 环境下检查路径
-        if sys.platform == "win32":
-            cursor_path = self.path_input.text().strip() or self.path_input.placeholderText()
-            if not os.path.exists(cursor_path):
-                QMessageBox.warning(self, "路径错误", "请输入正确的 Cursor 安装路径！")
-                return
-            
-            # 设置环境变量
-            os.environ["CURSOR_PATH"] = cursor_path
-        
-        # 清空日志
-        self.log_area.clear_logs()
-        self.log_area.append_log("程序已启动，等待操作...")
-        
-        # 禁用所有按钮
-        self.reset_btn.setEnabled(False)
-        self.restore_btn.setEnabled(False)
-        self.reset_btn.setText("重置中...")
-        
-        # 创建并启动重置线程
-        self.reset_thread = ResetThread()
-        self.reset_thread.log_signal.connect(self.log_area.append_log)
-        self.reset_thread.finished_signal.connect(self.on_reset_finished)
-        self.reset_thread.start()
+        elif style_type == "info":
+            return """
+                QPushButton {
+                    background-color: #009688;
+                    color: white;
+                    border: none;
+                    padding: 15px 30px;
+                    border-radius: 8px;
+                    font-size: 16px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #00796B;
+                }
+                QPushButton:pressed {
+                    background-color: #004D40;
+                }
+                QPushButton:disabled {
+                    background-color: #BDBDBD;
+                }
+            """
     
     def restore_backup(self):
         # 显示确认对话框
@@ -346,7 +460,6 @@ class MethodWindow(QMainWindow):
             self.log_area.append_log("程序已启动，等待操作...")
             
             # 禁用所有按钮
-            self.reset_btn.setEnabled(False)
             self.restore_btn.setEnabled(False)
             self.restore_btn.setText("恢复中...")
             
@@ -356,20 +469,137 @@ class MethodWindow(QMainWindow):
             self.restore_thread.finished_signal.connect(self.on_restore_finished)
             self.restore_thread.start()
     
-    def on_reset_finished(self, success):
-        # 恢复按钮状态
-        self.reset_btn.setEnabled(True)
-        self.restore_btn.setEnabled(True)
-        self.reset_btn.setText("重置机器码")
-        
-        if not success:
-            self.log_area.append_log("重置失败，请查看上方日志了解详细信息。")
-    
     def on_restore_finished(self, success):
         # 恢复按钮状态
-        self.reset_btn.setEnabled(True)
         self.restore_btn.setEnabled(True)
         self.restore_btn.setText("恢复备份")
         
         if not success:
-            self.log_area.append_log("恢复失败，请查看上方日志了解详细信息。") 
+            self.log_area.append_log("恢复失败，请查看上方日志了解详细信息。")
+    
+    def get_account(self):
+        """获取新账号"""
+        # 显示确认对话框
+        reply = QMessageBox.question(
+            self,
+            "确认操作",
+            "此操作将获取一个新的Cursor账号，是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # 清空日志区域
+            self.log_area.clear_logs()
+            
+            # 禁用按钮，防止重复点击
+            self.get_account_btn.setEnabled(False)
+            self.get_account_btn.setText("正在获取账号...")
+            
+            # 显示日志区域
+            self.log_area.setVisible(True)
+            
+            # 添加初始日志
+            self.log_area.append_log("开始获取新账号...")
+            
+            # 创建并启动线程
+            self.get_account_thread = GetAccountThread()
+            
+            # 连接信号
+            self.get_account_thread.log_signal.connect(self.log_area.append_log)
+            self.get_account_thread.finished_signal.connect(self.on_get_account_finished)
+            
+            # 启动线程
+            self.get_account_thread.start()
+    
+    def on_get_account_finished(self, success):
+        # 恢复按钮状态
+        self.restore_btn.setEnabled(True)
+        self.get_account_btn.setEnabled(True)
+        self.get_account_btn.setText("获取账号")
+        
+        if not success:
+            self.log_area.append_log("获取账号失败，请查看上方日志了解详细信息。")
+    
+    def show_account_dialog(self):
+        """显示账号选择对话框"""
+        # 清空日志
+        self.log_area.clear_logs()
+        self.log_area.append_log("开始账号切换流程...")
+        
+        dialog = AccountDialog(self)
+        # 连接日志信号到主窗口的日志区域
+        dialog.connect_log_to_main_window(self.log_area.append_log)
+        result = dialog.exec()
+        
+        if result == QDialog.DialogCode.Accepted:
+            self.log_area.append_log("账号切换成功")
+        else:
+            self.log_area.append_log("取消账号切换")
+
+    def show_code_info_dialog(self):
+        """显示激活码信息对话框"""
+        from src.views.account_dialog import CodeInfoDialog
+        
+        dialog = CodeInfoDialog(self, self.code_info)
+        dialog.exec()
+        
+        # 如果激活码信息有更新，则更新本地缓存
+        if dialog.code_info:
+            self.code_info = dialog.code_info
+            # 更新UI，如果已用账号数已达到或超过最大账号数，禁用获取账号按钮
+            max_accounts = self.code_info.get("maxAccounts", 0)
+            used_accounts = self.code_info.get("usedAccounts", 0)
+            
+            if used_accounts >= max_accounts and max_accounts > 0:
+                self.get_account_btn.setEnabled(False)
+                self.get_account_btn.setToolTip(f"已达到最大账号数限制 ({used_accounts}/{max_accounts})")
+                self.log_area.append_log(f"已达到最大账号数限制: {used_accounts}/{max_accounts}")
+            else:
+                self.get_account_btn.setEnabled(True)
+                self.get_account_btn.setToolTip("")
+
+    def fetch_code_info(self):
+        """获取激活码信息"""
+        self.log_area.append_log("正在获取激活码信息...")
+        
+        # 创建激活服务实例
+        from src.components.activation_service import ActivationService
+        from src.components.logger import logger
+        from src.config import config
+        
+        # 检查授权令牌
+        auth_token = config.auth_token
+        if not auth_token:
+            logger.error("未找到有效的授权令牌")
+            self.log_area.append_log("未找到有效的授权令牌，无法获取激活码信息")
+            return
+        
+        logger.info(f"开始获取激活码信息，使用令牌: {auth_token[:10]}...")
+        self.log_area.append_log(f"使用授权令牌获取激活码信息...")
+        
+        activation_service = ActivationService()
+        
+        # 获取激活码信息
+        success, code_info, error_msg = activation_service.get_code_info()
+        
+        if success and code_info:
+            self.code_info = code_info
+            logger.info(f"获取到激活码信息: {code_info}")
+            self.log_area.append_log("激活码信息获取成功")
+            self.log_area.append_log(f"激活码: {code_info.get('code', '--')}")
+            self.log_area.append_log(f"过期时间: {code_info.get('expiresAt', '--')}")
+            self.log_area.append_log(f"账号数量: {code_info.get('usedAccounts', 0)}/{code_info.get('maxAccounts', 0)}")
+            
+            # 检查账号数量限制
+            max_accounts = code_info.get("maxAccounts", 0)
+            used_accounts = code_info.get("usedAccounts", 0)
+            
+            # 如果已用账号数已达到或超过最大账号数，禁用获取账号按钮
+            if used_accounts >= max_accounts and max_accounts > 0:
+                self.get_account_btn.setEnabled(False)
+                self.get_account_btn.setToolTip(f"已达到最大账号数限制 ({used_accounts}/{max_accounts})")
+                self.log_area.append_log(f"已达到最大账号数限制: {used_accounts}/{max_accounts}")
+        else:
+            logger.error(f"获取激活码信息失败: {error_msg}")
+            self.log_area.append_log(f"获取激活码信息失败: {error_msg}") 

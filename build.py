@@ -15,8 +15,9 @@ def build_macos():
     # 使用 spec 文件构建应用
     cmd = [
         'pyinstaller',
-        '--clean',
+        # '--clean',  # 移除清理参数
         '--noconfirm',
+        '--log-level=DEBUG',
         'ResertCursorPro.spec'
     ]
     subprocess.run(cmd, check=True)
@@ -48,8 +49,9 @@ def build_windows():
     """构建 Windows 应用程序"""
     cmd = [
         'pyinstaller',
-        '--clean',
+        # '--clean',  # 移除清理参数
         '--noconfirm',
+        '--log-level=DEBUG',
         'ResertCursorPro.spec'
     ]
     subprocess.run(cmd, check=True)
@@ -60,8 +62,13 @@ def main():
         print("错误: 图标文件 'resources/icon.icns' 不存在！")
         return
     
+    if not os.path.exists('src/turnstilePatch'):
+        print("错误: turnstilePatch 目录不存在！")
+        return
+    
     # 清理旧的构建文件
-    clean_build()
+    # clean_build()  # 注释掉清理步骤，避免权限问题
+    print("跳过清理步骤，直接开始构建...")
     
     # 根据操作系统选择构建方法
     system = platform.system()

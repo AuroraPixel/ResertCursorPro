@@ -1,11 +1,15 @@
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout,
-    QLabel, QLineEdit, QPushButton, QMessageBox
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QMessageBox,
+    QFrame, QGridLayout, QSpacerItem, QSizePolicy
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
 import os
 import sys
+from datetime import datetime
+from src.components.activation_service import ActivationService
+from src.components.logger import logger
 
 def get_resource_path(relative_path):
     """获取资源文件的绝对路径"""
@@ -22,11 +26,12 @@ class LoginWindow(QMainWindow):
     def __init__(self, on_login_success):
         super().__init__()
         self.on_login_success = on_login_success
+        self.activation_service = ActivationService()
         self.setup_ui()
     
     def setup_ui(self):
         self.setWindowTitle("ResertCursorPro")
-        self.setFixedSize(400, 300)
+        self.setFixedSize(500, 400)
         
         # 设置窗口图标
         icon_path = get_resource_path('resources/icon.ico')
@@ -98,32 +103,64 @@ class LoginWindow(QMainWindow):
             }
         """
     
-    def get_button_style(self):
-        return """
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                padding: 12px;
-                border-radius: 6px;
-                font-size: 16px;
-                font-weight: bold;
-                min-width: 120px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-        """
+    def get_button_style(self, secondary=False):
+        if secondary:
+            return """
+                QPushButton {
+                    background-color: #78909C;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-size: 16px;
+                    font-weight: bold;
+                    min-width: 120px;
+                }
+                QPushButton:hover {
+                    background-color: #607D8B;
+                }
+                QPushButton:pressed {
+                    background-color: #455A64;
+                }
+            """
+        else:
+            return """
+                QPushButton {
+                    background-color: #2196F3;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-size: 16px;
+                    font-weight: bold;
+                    min-width: 120px;
+                }
+                QPushButton:hover {
+                    background-color: #1976D2;
+                }
+                QPushButton:pressed {
+                    background-color: #0D47A1;
+                }
+            """
     
     def verify_auth(self):
         auth_code = self.auth_input.text().strip()
         
-        # 这里添加实际的授权码验证逻辑
-        if auth_code == "1":  # 示例验证
+        if not auth_code:
+            QMessageBox.warning(self, "验证失败", "请输入授权码！")
+            return
+        
+        # 调用激活服务验证授权码
+        success, data, error_msg = self.activation_service.activate(auth_code)
+        
+        if success:
+            # 保存令牌信息（可以保存到配置文件或其他地方）
+            token = data.get("token")
+            expires_at = data.get("expires_at")
+            logger.info(f"授权成功，过期时间: {expires_at}")
+            
+            # 验证成功，进入主界面
             self.on_login_success()
             self.close()
         else:
-            QMessageBox.warning(self, "验证失败", "无效的授权码！") 
+            QMessageBox.warning(self, "验证失败", error_msg or "激活失败，请检查授权码！") 

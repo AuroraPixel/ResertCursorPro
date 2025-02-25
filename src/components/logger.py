@@ -4,6 +4,22 @@ import sys
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
+# 添加一个全局的日志回调函数
+ui_log_callback = None
+
+def set_ui_log_callback(callback):
+    """设置UI日志回调函数"""
+    global ui_log_callback
+    ui_log_callback = callback
+
+class UILogHandler(logging.Handler):
+    """将日志发送到UI界面的处理器"""
+    def emit(self, record):
+        global ui_log_callback
+        if ui_log_callback:
+            log_entry = self.format(record)
+            ui_log_callback(log_entry)
+
 def setup_logger(name='ResertCursorPro'):
     """
     配置日志记录器
@@ -35,6 +51,12 @@ def setup_logger(name='ResertCursorPro'):
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
+    
+    # 创建UI日志处理器
+    ui_handler = UILogHandler()
+    ui_handler.setLevel(logging.INFO)
+    ui_handler.setFormatter(formatter)
+    logger.addHandler(ui_handler)
     
     # 如果在打包环境中，添加文件处理器
     if getattr(sys, 'frozen', False):
