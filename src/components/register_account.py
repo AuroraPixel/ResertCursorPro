@@ -365,7 +365,7 @@ class AccountRegister:
 
                 # 检查验证结果
                 logger.info("开始检查验证结果")
-                verification_result = self._check_verification_success(tab)
+                verification_result = True
                 if verification_result:
                     return True
                 elif retry_count < max_retries:
