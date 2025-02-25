@@ -2,13 +2,81 @@ import random
 import string
 import time
 import requests
+from enum import Enum
+from typing import Optional
 from datetime import datetime
-from src.components.get_email_code import EmailVerificationHandlerNew
+from src.components.get_email_code_temp import EmailVerificationHandlerTemp
 from src.components.browser_utils import BrowserManager
 from src.components.logger import logger
 import os
 import asyncio
+import dotenv
+import sys
 
+# 加载环境变量
+dotenv.load_dotenv()
+
+class VerificationStatus(Enum):
+    """验证状态枚举"""
+
+    PASSWORD_PAGE = "@name=password"
+    CAPTCHA_PAGE = "@data-index=0"
+    ACCOUNT_SETTINGS = "Account Settings"
+
+def save_screenshot(tab, stage: str, timestamp: bool = True) -> None:
+        """
+        保存页面截图，只在开发环境下进行截屏
+
+        Args:
+            tab: 浏览器标签页对象
+            stage: 截图阶段标识
+            timestamp: 是否添加时间戳
+        """
+        # 检查是否为打包环境，如果是则不进行截屏
+        if getattr(sys, 'frozen', False):
+            logger.debug(f"打包环境下不进行截屏: {stage}")
+            return
+            
+        try:
+            # 创建 screenshots 目录
+            screenshot_dir = "screenshots"
+            if not os.path.exists(screenshot_dir):
+                os.makedirs(screenshot_dir)
+
+            # 生成文件名
+            if timestamp:
+                filename = f"turnstile_{stage}_{int(time.time())}.png"
+            else:
+                filename = f"turnstile_{stage}.png"
+
+            filepath = os.path.join(screenshot_dir, filename)
+
+            # 保存截图
+            tab.get_screenshot(filepath)
+            logger.debug(f"截图已保存: {filepath}")
+        except Exception as e:
+            logger.warning(f"截图保存失败: {str(e)}")
+
+def check_verification_success(tab) -> Optional[VerificationStatus]:
+    """
+    检查验证是否成功
+    Args:
+        tab: 浏览器标签页
+    Returns:
+        VerificationStatus: 验证成功时返回对应状态，失败返回 None
+    """
+    # 检查是否到达成功页面
+    for status in VerificationStatus:
+        if tab.ele(status.value):
+            logger.info(f"验证成功 - 已到达{status.name}页面")
+            return status
+
+    return None
+
+class TurnstileError(Exception):
+    """Turnstile 验证相关异常"""
+
+    pass
 
 class AccountRegister:
     def __init__(self):
@@ -77,20 +145,23 @@ class AccountRegister:
         logger.info("Step 1: 访问注册页面...")
         tab.get(self.sign_up_url)
         
+        # 检查是否为打包环境，调整等待时间
+        is_packaged = getattr(sys, 'frozen', False)
+        
         try:
             if tab.ele("@name=first_name"):
                 logger.info("Step 2: 开始填写个人信息")
                 logger.info("  - 输入名字")
                 tab.actions.click("@name=first_name").input(self.first_name)
-                time.sleep(random.uniform(1, 3))
+                time.sleep(random.uniform(0.5, 1) if is_packaged else random.uniform(1, 3))
 
                 logger.info("  - 输入姓氏")
                 tab.actions.click("@name=last_name").input(self.last_name)
-                time.sleep(random.uniform(1, 3))
+                time.sleep(random.uniform(0.5, 1) if is_packaged else random.uniform(1, 3))
 
                 logger.info("  - 输入邮箱")
                 tab.actions.click("@name=email").input(self.account)
-                time.sleep(random.uniform(1, 3))
+                time.sleep(random.uniform(0.5, 1) if is_packaged else random.uniform(1, 3))
 
                 logger.info("  - 提交个人信息")
                 tab.actions.click("@type=submit")
@@ -100,14 +171,14 @@ class AccountRegister:
             return False
 
         logger.info("Step 3: 处理 Turnstile 验证 (第一次)")
-        self._handle_turnstile(tab)
+        self.handle_turnstile(tab)
 
         try:
             if tab.ele("@name=password"):
                 logger.info("Step 4: 设置 Cursor 密码")
                 logger.info("  - 输入密码")
                 tab.ele("@name=password").input(self.cursor_password)
-                time.sleep(random.uniform(1, 3))
+                time.sleep(random.uniform(0.5, 1) if is_packaged else random.uniform(1, 3))
                 
                 logger.info("  - 提交密码")
                 tab.ele("@type=submit").click()
@@ -121,7 +192,7 @@ class AccountRegister:
             return False
 
         logger.info("Step 5: 处理 Turnstile 验证 (第二次)")
-        self._handle_turnstile(tab)
+        self.handle_turnstile(tab)
 
         logger.info("Step 6: 处理邮箱验证码")
         # 添加验证码处理的超时和重试机制
@@ -151,52 +222,65 @@ class AccountRegister:
                             self.email_handler.get_verification_code(),
                             timeout=code_timeout
                         )
-                    except asyncio.TimeoutError:
-                        logger.warning(f"  - 获取验证码超时 ({code_timeout}秒)")
-                        if retry_count < max_retries:
-                            logger.info(f"  - 等待 5 秒后进行下一次尝试...")
-                            time.sleep(5)
-                            continue
-                        else:
-                            logger.error(f"  - 已达到最大重试次数 ({max_retries}次)，验证码获取失败")
-                            return False
-                    
-                    if not code:
-                        logger.warning(f"  - 第 {retry_count} 次尝试未获取到验证码")
-                        if retry_count < max_retries:
-                            logger.info(f"  - 等待 5 秒后进行下一次尝试...")
-                            time.sleep(5)
-                            continue
-                        else:
-                            logger.error(f"  - 已达到最大重试次数 ({max_retries}次)，验证码获取失败")
-                            return False
+                        
+                        if not code:
+                            logger.warning(f"  - 第 {retry_count} 次尝试未获取到验证码")
+                            if retry_count < max_retries:
+                                logger.info(f"  - 等待 5 秒后进行下一次尝试...")
+                                time.sleep(5)
+                                continue
+                            else:
+                                logger.error(f"  - 已达到最大重试次数 ({max_retries}次)，验证码获取失败")
+                                return False
 
-                    logger.info("  - 成功获取验证码")
-                    logger.info("  - 开始输入验证码")
-                    i = 0
-                    for digit in code:
-                        tab.ele(f"@data-index={i}").input(digit)
-                        time.sleep(random.uniform(0.1, 0.3))
-                        i += 1
-                    logger.info("  - 验证码输入完成")
+                        logger.info("  - 成功获取验证码")
+                        logger.info("  - 开始输入验证码")
+                        i = 0
+                        for digit in code:
+                            tab.ele(f"@data-index={i}").input(digit)
+                            time.sleep(random.uniform(0.1, 0.3))
+                            i += 1
+                        logger.info("  - 验证码输入完成")
+                        
+                        # 等待验证结果
+                        time.sleep(random.uniform(2, 4))
+                        
+                        # 检查验证是否成功
+                        if self._check_verification_success(tab):
+                            logger.info("  - 验证码验证成功")
+                            break
+                        else:
+                            logger.warning("  - 验证码验证失败，可能需要重试")
+                            if retry_count < max_retries:
+                                continue
+                            else:
+                                logger.error("  - 验证码验证失败，已达到最大重试次数")
+                                return False
                     
-                    # 等待页面反应
-                    logger.info("  - 等待页面响应...")
-                    time.sleep(3)
-                    
-                    # 检查是否验证成功
-                    if tab.ele("Account Settings"):
-                        logger.info("  - 验证码验证成功")
-                        break
-                    elif retry_count < max_retries:
-                        logger.warning("  - 验证码可能不正确，尝试重新获取")
-                        continue
-                    else:
-                        logger.error(f"  - 已达到最大重试次数 ({max_retries}次)，验证失败")
-                        return False
+                    except asyncio.TimeoutError:
+                        logger.warning(f"  - 获取验证码超时 (超过 {code_timeout} 秒)")
+                        if retry_count < max_retries:
+                            continue
+                        else:
+                            logger.error("  - 获取验证码失败，已达到最大重试次数")
+                            return False
                 
-                # 如果没有找到验证码输入框，等待一下再检查
+                # 如果没有找到验证码输入框，可能页面还没加载完成或者已经跳过了验证码步骤
                 time.sleep(2)
+                
+                # 再次检查是否已经进入账户设置页面
+                if tab.ele("Account Settings"):
+                    logger.info("  - 已进入账户设置页面，跳过验证码步骤")
+                    break
+                
+                # 如果既没有验证码输入框，也没有进入账户设置页面，可能是页面加载问题
+                retry_count += 1
+                if retry_count < max_retries:
+                    logger.info(f"  - 等待页面加载，5 秒后进行第 {retry_count+1} 次尝试...")
+                    time.sleep(5)
+                else:
+                    logger.error(f"  - 已达到最大重试次数 ({max_retries}次)，验证码处理失败")
+                    return False
                 
             except Exception as e:
                 elapsed_time = time.time() - start_time
@@ -220,10 +304,10 @@ class AccountRegister:
             return False
 
         logger.info("Step 7: 处理 Turnstile 验证 (第三次)")
-        self._handle_turnstile(tab)
+        self.handle_turnstile(tab)
 
         logger.info("Step 8: 等待登录完成...")
-        time.sleep(random.randint(3, 6))
+        time.sleep(random.randint(1, 2) if is_packaged else random.randint(3, 6))
 
         logger.info("Step 9: 获取 Cursor Token")
         self.cursor_token = self.get_cursor_session_token(tab)
@@ -241,13 +325,24 @@ class AccountRegister:
         logger.error("Step 9 失败: 未能获取到 Cursor Token")
         return False
 
-    def _handle_turnstile(self, tab, max_retries: int = 2, retry_interval: tuple = (1, 2)) -> bool:
+    def handle_turnstile(self, tab, max_retries: int = 2, retry_interval: tuple = (0.5, 1.5)) -> bool:
         """处理 Turnstile 验证"""
+        logger.info("正在检测 Turnstile 验证...")
+        save_screenshot(tab, "start")
         retry_count = 0
+        
+        # 检查是否为打包环境，调整等待时间
+        is_packaged = getattr(sys, 'frozen', False)
+        wait_time = (0.5, 1.5) 
+        
         try:
             while retry_count < max_retries:
                 retry_count += 1
+                if not is_packaged:
+                    logger.debug(f"第 {retry_count} 次尝试验证")
+
                 try:
+                    # 定位验证框元素
                     challenge_check = (
                         tab.ele("@id=cf-turnstile", timeout=2)
                         .child()
@@ -257,31 +352,69 @@ class AccountRegister:
                     )
 
                     if challenge_check:
-                        time.sleep(random.uniform(1, 3))
+                        logger.info("检测到 Turnstile 验证框，开始处理...")
+                        time.sleep(random.uniform(0.5, 1))
                         challenge_check.click()
-                        time.sleep(2)
+                        logger.info("Turnstile完成")
+                        time.sleep(0.5)
+                        save_screenshot(tab, "clicked")
 
                 except Exception as e:
-                    pass
+                    if not is_packaged:
+                        logger.debug(f"当前尝试未成功: {str(e)}")
 
-                if self._check_verification_success(tab):
+                # 检查验证结果
+                logger.info("开始检查验证结果")
+                verification_result = self._check_verification_success(tab)
+                if verification_result:
                     return True
                 elif retry_count < max_retries:
-                    time.sleep(random.uniform(*retry_interval))
+                    time.sleep(random.uniform(*wait_time))
                     continue
+                else:
+                    logger.error(f"验证失败 - 已达到最大重试次数 {max_retries}")
+                    save_screenshot(tab, "failed")
+                    return False
 
         except Exception as e:
-            logger.error(f"Turnstile 验证过程发生异常: {str(e)}")
+            error_msg = f"Turnstile 验证过程发生异常: {str(e)}"
+            logger.error(error_msg)
+            save_screenshot(tab, "error")
+            raise TurnstileError(error_msg)
 
         return False
-
+            
     def _check_verification_success(self, tab):
-        """检查验证是否成功"""
-        success_elements = ["@name=password", "@data-index=0", "Account Settings"]
-        for element in success_elements:
-            if tab.ele(element):
+        """检查验证码是否验证成功"""
+        try:
+            # 检查是否已经进入账户设置页面
+            if tab.ele("Account Settings"):
                 return True
-        return False
+                
+            # 检查是否有错误消息
+            error_elements = [
+                "Invalid verification code",
+                "验证码无效",
+                "Please try again",
+                "请重试"
+            ]
+            
+            for error_text in error_elements:
+                if tab.ele(error_text):
+                    logger.warning(f"  - 发现错误信息: {error_text}")
+                    return False
+                    
+            # 检查是否仍在验证码页面
+            # if tab.ele("@data-index=0"):
+            #     # 如果验证码输入框仍然存在，可能验证未完成
+            #     return False
+                
+            # 如果没有明确的失败迹象，假设成功
+            return True
+            
+        except Exception as e:
+            logger.error(f"  - 检查验证结果时出错: {str(e)}")
+            return False
 
     async def register_single_account(self):
         """注册单个账号"""
@@ -292,6 +425,9 @@ class AccountRegister:
             browser = self.browser_manager.init_browser()
             tab = browser.latest_tab
             
+            # 检查是否为打包环境，调整等待时间
+            is_packaged = getattr(sys, 'frozen', False)
+            
             # 生成随机账号信息
             logger.info("Step 2: 生成随机账号信息")
             self.first_name = self._generate_random_name()
@@ -300,7 +436,11 @@ class AccountRegister:
             
             # 创建邮箱
             logger.info("Step 2.1: 创建临时邮箱")
-            self.email_handler = EmailVerificationHandlerNew()
+            
+            # 使用TempMail服务
+            logger.info("使用TempMail服务")
+            self.email_handler = EmailVerificationHandlerTemp()
+                
             self.account, self.email_token, self.email_password = await self.email_handler.generate_random_email()
             
             if not self.account:
@@ -312,17 +452,17 @@ class AccountRegister:
             # 访问注册页面
             logger.info("Step 3: 访问 Cursor 注册页面")
             tab.get(self.sign_up_url)
-            time.sleep(random.uniform(2, 4))
+            time.sleep(random.uniform(1, 2) if is_packaged else random.uniform(2, 4))
             
             # 输入邮箱
             logger.info("Step 3.1: 输入邮箱地址")
             if tab.ele("@name=email"):
                 tab.ele("@name=email").input(self.account)
-                time.sleep(random.uniform(1, 2))
+                time.sleep(random.uniform(0.5, 1) if is_packaged else random.uniform(1, 2))
                 
                 logger.info("Step 3.2: 点击继续按钮")
                 tab.ele("@type=submit").click()
-                time.sleep(random.uniform(2, 4))
+                time.sleep(random.uniform(1, 2) if is_packaged else random.uniform(2, 4))
             else:
                 logger.error("Step 3.1 失败: 未找到邮箱输入框")
                 return False

@@ -5,7 +5,8 @@ from DrissionPage import ChromiumOptions, Chromium
 from dotenv import load_dotenv
 from .logger import logger  # 导入项目的 logger
 
-load_dotenv()
+# 确保每次都重新加载环境变量
+load_dotenv(override=True)
 
 
 class BrowserManager:
@@ -15,7 +16,9 @@ class BrowserManager:
     def init_browser(self, user_agent=None):
         """初始化浏览器"""
         co = self._get_browser_options(user_agent)
+        logger.info("正在初始化浏览器...")
         self.browser = Chromium(co)
+        logger.info("浏览器初始化完成")
         return self.browser
 
     def _get_browser_options(self, user_agent=None):
@@ -29,6 +32,11 @@ class BrowserManager:
 
         co.set_pref("credentials_enable_service", False)
         co.set_argument("--hide-crash-restore-bubble")
+        
+        # 添加窗口大小设置
+        co.set_argument("--window-size=1280,800")
+        logger.info("设置浏览器窗口大小: 1280x800")
+        
         proxy = os.getenv("BROWSER_PROXY")
         if proxy:
             co.set_proxy(proxy)
@@ -39,9 +47,21 @@ class BrowserManager:
             co.set_user_agent(user_agent)
             logger.info(f"设置 User-Agent: {user_agent}")  # 添加 user-agent 信息日志
 
-        headless = os.getenv("BROWSER_HEADLESS", "True").lower() == "true"
+        # 根据环境决定是否使用无头模式
+        # 在打包环境中默认使用无头模式，在开发环境中根据环境变量决定
+        is_packaged = getattr(sys, 'frozen', False)
+        
+        if is_packaged:
+            # 打包环境强制使用无头模式
+            headless = True
+            logger.info("打包环境: 强制使用无头模式")
+        else:
+            # 开发环境根据环境变量决定
+            headless_env = os.getenv("BROWSER_HEADLESS", "False").lower()
+            headless = headless_env == "true"
+            logger.info(f"开发环境: 无头模式设置为 {headless} (环境变量值: {headless_env})")
+        
         co.headless(headless)
-        logger.info(f"无头模式: {headless}")  # 添加无头模式信息日志
 
         # Mac 系统特殊处理
         if sys.platform == "darwin":

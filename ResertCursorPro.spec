@@ -27,7 +27,7 @@ a = Analysis(
         'src.components.account_service',
         'src.views.account_dialog',
         'src.components.cursor_auth_manager',
-        'src.components.get_email_code',
+        'src.components.get_email_code_temp',
         'src.components.browser_utils',
         'src.config',
         'colorama',
