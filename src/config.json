@@ -1,0 +1,9 @@
+{
+    "api": {
+        "base_url": "http://localhost:8080",
+        "activate_endpoint": "/api/app/activate",
+        "account_endpoint": "/api/app/account",
+        "timeout": 10,
+        "auth_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlSWQiOjQsInN1YiI6ImFwcCIsImV4cCI6MTc0MDU3NTAyNSwiaWF0IjoxNzQwNDg4NjI1fQ.bayFCLTPVAp6SmFsuyBa-Sm7wP2t_1-78p8mwjxotWQ"
+    }
+}

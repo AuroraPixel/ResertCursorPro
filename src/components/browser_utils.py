@@ -53,12 +53,12 @@ class BrowserManager:
         
         if is_packaged:
             # 打包环境强制使用无头模式
-            headless = True
+            headless = False
             logger.info("打包环境: 强制使用无头模式")
         else:
             # 开发环境根据环境变量决定
             headless_env = os.getenv("BROWSER_HEADLESS", "False").lower()
-            headless = headless_env == "true"
+            headless = False
             logger.info(f"开发环境: 无头模式设置为 {headless} (环境变量值: {headless_env})")
         
         co.headless(headless)

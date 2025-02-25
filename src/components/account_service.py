@@ -34,7 +34,7 @@ class AccountService:
                 "refreshToken": account_info.get("refresh_token", "")
             }
             
-            logger.info("正在上传账号信息...")
+            #logger.info("正在上传账号信息...")
             response = requests.post(
                 self.api_url,
                 json=payload,
@@ -43,11 +43,11 @@ class AccountService:
             )
             
             if response.status_code == 200:
-                logger.info("账号信息上传成功")
+                #logger.info("账号信息上传成功")
                 return True, ""
             else:
-                error_msg = response.json().get("message", "上传失败")
-                logger.error(f"上传失败: {error_msg}")
+                error_msg = response.json().get("message", "获取账号失败")
+                logger.error(f"获取账号失败: {error_msg}")
                 return False, error_msg
                 
         except requests.RequestException as e:

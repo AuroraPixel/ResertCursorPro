@@ -10,6 +10,7 @@ import sys
 from datetime import datetime
 from src.components.activation_service import ActivationService
 from src.components.logger import logger
+import json
 
 def get_resource_path(relative_path):
     """获取资源文件的绝对路径"""
@@ -154,10 +155,32 @@ class LoginWindow(QMainWindow):
         success, data, error_msg = self.activation_service.activate(auth_code)
         
         if success:
-            # 保存令牌信息（可以保存到配置文件或其他地方）
+            # 保存令牌信息到配置文件
             token = data.get("token")
-            expires_at = data.get("expires_at")
+            expires_at = data.get("expiresAt")
             logger.info(f"授权成功，过期时间: {expires_at}")
+            
+            # 将token保存到config中
+            from src.config import config
+            config._config["api"]["auth_token"] = token
+            
+            # 保存配置到文件
+            try:
+                if getattr(sys, 'frozen', False):
+                    # 打包环境
+                    base_path = sys._MEIPASS
+                else:
+                    # 开发环境
+                    base_path = os.path.dirname(os.path.dirname(__file__))
+                
+                config_path = os.path.join(base_path, 'config.json')
+                
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    json.dump(config._config, f, indent=4)
+                
+                logger.info(f"授权令牌已保存到配置文件: {config_path}")
+            except Exception as e:
+                logger.error(f"保存配置文件失败: {str(e)}")
             
             # 验证成功，进入主界面
             self.on_login_success()

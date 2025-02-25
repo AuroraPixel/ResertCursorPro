@@ -23,9 +23,13 @@ class Config:
             if getattr(sys, 'frozen', False):
                 # 打包环境
                 base_path = sys._MEIPASS
+                # 打包环境下使用生产环境API地址
+                production_api_url = "https://restar-cursor.zeabur.app"
             else:
                 # 开发环境
                 base_path = os.path.dirname(os.path.dirname(__file__))
+                # 开发环境使用本地API地址
+                production_api_url = "http://localhost:8080"
             
             config_path = os.path.join(base_path, 'config.json')
             
@@ -33,11 +37,15 @@ class Config:
             if os.path.exists(config_path):
                 with open(config_path, 'r', encoding='utf-8') as f:
                     self._config = json.load(f)
+                    
+                # 如果是打包环境，强制使用生产环境API地址
+                if getattr(sys, 'frozen', False):
+                    self._config["api"]["base_url"] = production_api_url
             else:
                 # 使用默认配置
                 self._config = {
                     "api": {
-                        "base_url": "http://localhost:8080",
+                        "base_url": production_api_url,
                         "activate_endpoint": "/api/app/activate",
                         "account_endpoint": "/api/app/account",
                         "code_info_endpoint": "/api/app/code-info",
@@ -48,9 +56,11 @@ class Config:
         except Exception as e:
             print(f"加载配置文件失败: {str(e)}")
             # 使用默认配置
+            # 根据环境选择合适的API地址
+            default_api_url = "https://restar-cursor.zeabur.app" if getattr(sys, 'frozen', False) else "http://localhost:8080"
             self._config = {
                 "api": {
-                    "base_url": "http://localhost:8080",
+                    "base_url": default_api_url,
                     "activate_endpoint": "/api/app/activate",
                     "account_endpoint": "/api/app/account",
                     "code_info_endpoint": "/api/app/code-info",
@@ -62,6 +72,9 @@ class Config:
     @property
     def api_base_url(self) -> str:
         """获取API基础URL"""
+        # 如果是打包环境，强制返回生产环境API地址
+        if getattr(sys, 'frozen', False):
+            return "https://restar-cursor.zeabur.app"
         return self._config.get("api", {}).get("base_url", "http://localhost:8080")
     
     @property

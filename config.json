@@ -1,8 +1,9 @@
 {
     "api": {
-        "base_url": "http://localhost:8080",
+        "base_url": "https://restar-cursor.zeabur.app",
         "activate_endpoint": "/api/app/activate",
         "account_endpoint": "/api/app/account",
+        "code_info_endpoint": "/api/app/code-info",
         "timeout": 10,
         "auth_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjb2RlSWQiOjQsInN1YiI6ImFwcCIsImV4cCI6MTc0MDQ4NzI3MiwiaWF0IjoxNzQwNDAwODcyfQ.-AzN6SS3bn5wYzc64htCa1n_x-iGRYkD4p6zUVzHgEw"
     }

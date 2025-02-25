@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QTextEdit, QLineEdit,
     QFrame, QMessageBox, QDialog
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QIcon
 import time
 
@@ -19,6 +19,7 @@ from src.components.register_account import AccountRegister
 from src.components.account_service import AccountService
 from src.views.account_dialog import AccountDialog
 from src.components.logger import logger, set_ui_log_callback
+from src.components.activation_service import ActivationService
 
 def get_resource_path(relative_path):
     """获取资源文件的绝对路径"""
@@ -249,6 +250,11 @@ class MethodWindow(QMainWindow):
         self.get_account_thread = None
         self.cursor_path = None
         self.code_info = None
+        
+        # 创建账号服务实例
+        from src.components.account_service import AccountService
+        self.account_service = AccountService()
+        
         self.setup_ui()
         
         # 获取激活码信息
@@ -378,6 +384,191 @@ class MethodWindow(QMainWindow):
         
         # 添加初始日志
         self.log_area.append_log("程序已启动，等待操作...")
+        
+        # 启动定时器，定期检查用户状态
+        self.status_timer = QTimer(self)
+        self.status_timer.timeout.connect(self.check_user_status_silently)
+        self.status_timer.start(6000)  # 每分钟检查一次
+    
+    def check_user_status_silently(self):
+        """
+        静默检查用户状态，不显示消息框，用于定时检查
+        """
+        from src.components.logger import logger
+        from src.config import config
+        from datetime import datetime
+        
+        # 检查授权令牌
+        auth_token = config.auth_token
+        if not auth_token:
+            logger.error("定时检查: 未找到有效的授权令牌")
+            self.disable_all_buttons("未找到有效的授权令牌，请重新登录")
+            return False
+        
+        # 使用 activation_service 获取激活码信息
+        activation_service = ActivationService()
+        success, code_info, error_msg = activation_service.get_code_info()
+        
+        if not success:
+            logger.error(f"定时检查: 获取激活码信息失败: {error_msg}")
+            self.disable_all_buttons(f"网络连接失败或授权已过期: {error_msg}")
+            return False
+        
+        # 更新本地激活码信息缓存
+        self.code_info = code_info
+        
+        # 检查账号是否过期 - 根据 expiresAt 字段与当前时间比较
+        expires_at_str = code_info.get("expiresAt", "")
+        if expires_at_str:
+            try:
+                # 解析过期时间字符串，格式如: "2025-02-28T18:45:06+08:00"
+                expires_at = datetime.fromisoformat(expires_at_str)
+                # 将带时区的datetime转换为不带时区的datetime
+                if expires_at.tzinfo is not None:
+                    # 转换为UTC时间，然后去掉时区信息
+                    expires_at = expires_at.astimezone().replace(tzinfo=None)
+                now = datetime.now()
+                
+                if now > expires_at:
+                    logger.error("定时检查: 授权已过期")
+                    self.disable_all_buttons("授权已过期，请重新激活")
+                    return False
+            except ValueError as e:
+                logger.error(f"定时检查: 解析过期时间出错: {str(e)}")
+                # 如果无法解析时间，我们不应该阻止用户使用
+        
+        # 检查状态是否启用
+        status = code_info.get("status", "")
+        if status != "enabled":
+            logger.error(f"定时检查: 账号状态异常: {status}")
+            self.disable_all_buttons(f"账号状态异常: {status}")
+            return False
+        
+        # 恢复按钮状态
+        self.enable_all_buttons()
+        return True
+    
+    def disable_all_buttons(self, reason):
+        """
+        禁用所有功能按钮
+        
+        Args:
+            reason: 禁用原因
+        """
+        self.restore_btn.setEnabled(False)
+        self.get_account_btn.setEnabled(False)
+        self.switch_account_btn.setEnabled(False)
+        self.code_info_btn.setEnabled(False)
+        
+        # 设置提示信息
+        self.restore_btn.setToolTip(reason)
+        self.get_account_btn.setToolTip(reason)
+        self.switch_account_btn.setToolTip(reason)
+        self.code_info_btn.setToolTip(reason)
+        
+        # 添加日志
+        self.log_area.append_log(f"功能已禁用: {reason}")
+    
+    def enable_all_buttons(self):
+        """恢复所有按钮状态"""
+        self.restore_btn.setEnabled(True)
+        self.switch_account_btn.setEnabled(True)
+        self.code_info_btn.setEnabled(True)
+        
+        # 清除提示信息
+        self.restore_btn.setToolTip("")
+        self.switch_account_btn.setToolTip("")
+        self.code_info_btn.setToolTip("")
+        
+        # 根据激活码信息决定是否启用获取账号按钮
+        if self.code_info:
+            max_accounts = self.code_info.get("maxAccounts", 0)
+            used_accounts = self.code_info.get("usedAccounts", 0)
+            
+            if used_accounts >= max_accounts and max_accounts > 0:
+                self.get_account_btn.setEnabled(False)
+                self.get_account_btn.setToolTip(f"已达到最大账号数限制 ({used_accounts}/{max_accounts})")
+            else:
+                self.get_account_btn.setEnabled(True)
+                self.get_account_btn.setToolTip("")
+        else:
+            self.get_account_btn.setEnabled(True)
+            self.get_account_btn.setToolTip("")
+    
+    def verify_user_status(self) -> bool:
+        """
+        验证用户状态，检查网络连接和账号是否过期
+        
+        Returns:
+            bool: 验证是否通过
+        """
+        from src.components.logger import logger
+        from src.config import config
+        from datetime import datetime
+        from src.components.activation_service import ActivationService
+        
+        self.log_area.append_log("正在验证用户状态...")
+        
+        # 检查授权令牌
+        auth_token = config.auth_token
+        if not auth_token:
+            logger.error("未找到有效的授权令牌")
+            self.log_area.append_log("未找到有效的授权令牌，请重新登录")
+            QMessageBox.critical(self, "验证失败", "未找到有效的授权令牌，请重新登录")
+            self.disable_all_buttons("未找到有效的授权令牌，请重新登录")
+            return False
+        
+        # 使用 activation_service 获取激活码信息
+        activation_service = ActivationService()
+        success, code_info, error_msg = activation_service.get_code_info()
+        
+        if not success:
+            logger.error(f"获取激活码信息失败: {error_msg}")
+            self.log_area.append_log(f"网络连接失败或授权已过期: {error_msg}")
+            QMessageBox.critical(self, "验证失败", f"网络连接失败或授权已过期: {error_msg}")
+            self.disable_all_buttons(f"网络连接失败或授权已过期: {error_msg}")
+            return False
+        
+        # 更新本地激活码信息缓存
+        self.code_info = code_info
+        
+        # 检查账号是否过期 - 根据 expiresAt 字段与当前时间比较
+        expires_at_str = code_info.get("expiresAt", "")
+        if expires_at_str:
+            try:
+                # 解析过期时间字符串，格式如: "2025-02-28T18:45:06+08:00"
+                expires_at = datetime.fromisoformat(expires_at_str)
+                # 将带时区的datetime转换为不带时区的datetime
+                if expires_at.tzinfo is not None:
+                    # 转换为UTC时间，然后去掉时区信息
+                    expires_at = expires_at.astimezone().replace(tzinfo=None)
+                now = datetime.now()
+                
+                if now > expires_at:
+                    logger.error("授权已过期")
+                    self.log_area.append_log("授权已过期，请重新激活")
+                    QMessageBox.critical(self, "验证失败", "授权已过期，请重新激活")
+                    self.disable_all_buttons("授权已过期，请重新激活")
+                    return False
+            except ValueError as e:
+                logger.error(f"解析过期时间出错: {str(e)}")
+                self.log_area.append_log(f"解析过期时间出错: {str(e)}")
+                # 如果无法解析时间，我们不应该阻止用户使用
+        
+        # 检查状态是否启用
+        status = code_info.get("status", "")
+        if status != "enabled":
+            logger.error(f"账号状态异常: {status}")
+            self.log_area.append_log(f"账号状态异常: {status}")
+            QMessageBox.critical(self, "验证失败", f"账号状态异常: {status}")
+            self.disable_all_buttons(f"账号状态异常: {status}")
+            return False
+        
+        # 确保按钮状态正确
+        self.enable_all_buttons()
+        
+        self.log_area.append_log("用户状态验证通过")
+        return True
     
     def get_button_style(self, style_type="primary"):
         if style_type == "primary":
@@ -445,6 +636,11 @@ class MethodWindow(QMainWindow):
             """
     
     def restore_backup(self):
+        """恢复备份"""
+        # 验证用户状态
+        if not self.verify_user_status():
+            return
+            
         # 显示确认对话框
         reply = QMessageBox.question(
             self,
@@ -479,6 +675,10 @@ class MethodWindow(QMainWindow):
     
     def get_account(self):
         """获取新账号"""
+        # 验证用户状态
+        if not self.verify_user_status():
+            return
+            
         # 显示确认对话框
         reply = QMessageBox.question(
             self,
@@ -492,9 +692,12 @@ class MethodWindow(QMainWindow):
             # 清空日志区域
             self.log_area.clear_logs()
             
-            # 禁用按钮，防止重复点击
+            # 禁用所有按钮，防止重复点击
             self.get_account_btn.setEnabled(False)
             self.get_account_btn.setText("正在获取账号...")
+            self.restore_btn.setEnabled(False)
+            self.switch_account_btn.setEnabled(False)
+            self.code_info_btn.setEnabled(False)
             
             # 显示日志区域
             self.log_area.setVisible(True)
@@ -514,15 +717,20 @@ class MethodWindow(QMainWindow):
     
     def on_get_account_finished(self, success):
         # 恢复按钮状态
-        self.restore_btn.setEnabled(True)
-        self.get_account_btn.setEnabled(True)
         self.get_account_btn.setText("获取账号")
+        
+        # 重新获取激活码信息，更新按钮状态
+        self.fetch_code_info()
         
         if not success:
             self.log_area.append_log("获取账号失败，请查看上方日志了解详细信息。")
     
     def show_account_dialog(self):
         """显示账号选择对话框"""
+        # 验证用户状态
+        if not self.verify_user_status():
+            return
+            
         # 清空日志
         self.log_area.clear_logs()
         self.log_area.append_log("开始账号切换流程...")
@@ -539,6 +747,10 @@ class MethodWindow(QMainWindow):
 
     def show_code_info_dialog(self):
         """显示激活码信息对话框"""
+        # 验证用户状态
+        if not self.verify_user_status():
+            return
+            
         from src.views.account_dialog import CodeInfoDialog
         
         dialog = CodeInfoDialog(self, self.code_info)
@@ -573,33 +785,69 @@ class MethodWindow(QMainWindow):
         if not auth_token:
             logger.error("未找到有效的授权令牌")
             self.log_area.append_log("未找到有效的授权令牌，无法获取激活码信息")
-            return
-        
-        logger.info(f"开始获取激活码信息，使用令牌: {auth_token[:10]}...")
-        self.log_area.append_log(f"使用授权令牌获取激活码信息...")
-        
-        activation_service = ActivationService()
+            self.disable_all_buttons("未找到有效的授权令牌，请重新登录")
+            return False
         
         # 获取激活码信息
+        activation_service = ActivationService()
         success, code_info, error_msg = activation_service.get_code_info()
         
-        if success and code_info:
-            self.code_info = code_info
-            logger.info(f"获取到激活码信息: {code_info}")
-            self.log_area.append_log("激活码信息获取成功")
-            self.log_area.append_log(f"激活码: {code_info.get('code', '--')}")
-            self.log_area.append_log(f"过期时间: {code_info.get('expiresAt', '--')}")
-            self.log_area.append_log(f"账号数量: {code_info.get('usedAccounts', 0)}/{code_info.get('maxAccounts', 0)}")
-            
-            # 检查账号数量限制
-            max_accounts = code_info.get("maxAccounts", 0)
-            used_accounts = code_info.get("usedAccounts", 0)
-            
-            # 如果已用账号数已达到或超过最大账号数，禁用获取账号按钮
-            if used_accounts >= max_accounts and max_accounts > 0:
-                self.get_account_btn.setEnabled(False)
-                self.get_account_btn.setToolTip(f"已达到最大账号数限制 ({used_accounts}/{max_accounts})")
-                self.log_area.append_log(f"已达到最大账号数限制: {used_accounts}/{max_accounts}")
-        else:
+        if not success:
             logger.error(f"获取激活码信息失败: {error_msg}")
-            self.log_area.append_log(f"获取激活码信息失败: {error_msg}") 
+            self.log_area.append_log(f"获取激活码信息失败: {error_msg}")
+            self.disable_all_buttons(f"网络连接失败或授权已过期: {error_msg}")
+            return False
+        
+        # 更新本地激活码信息缓存
+        self.code_info = code_info
+        
+        # 检查账号是否过期 - 根据 expiresAt 字段与当前时间比较
+        expires_at_str = code_info.get("expiresAt", "")
+        if expires_at_str:
+            try:
+                # 解析过期时间字符串，格式如: "2025-02-28T18:45:06+08:00"
+                expires_at = datetime.fromisoformat(expires_at_str)
+                # 将带时区的datetime转换为不带时区的datetime
+                if expires_at.tzinfo is not None:
+                    # 转换为UTC时间，然后去掉时区信息
+                    expires_at = expires_at.astimezone().replace(tzinfo=None)
+                now = datetime.now()
+                
+                if now > expires_at:
+                    logger.error("授权已过期")
+                    self.log_area.append_log("授权已过期，请重新激活")
+                    self.disable_all_buttons("授权已过期，请重新激活")
+                    return False
+            except ValueError as e:
+                logger.error(f"解析过期时间出错: {str(e)}")
+                # 如果无法解析时间，我们不应该阻止用户使用
+        
+        # 检查状态是否启用
+        status = code_info.get("status", "")
+        if status != "enabled":
+            logger.error(f"账号状态异常: {status}")
+            self.log_area.append_log(f"账号状态异常: {status}")
+            self.disable_all_buttons(f"账号状态异常: {status}")
+            return False
+            
+        # 记录获取到的激活码信息
+        logger.info(f"获取到激活码信息: {code_info}")
+        self.log_area.append_log("激活码信息获取成功")
+        self.log_area.append_log(f"激活码: {code_info.get('code', '--')}")
+        self.log_area.append_log(f"过期时间: {code_info.get('expiresAt', '--')}")
+        self.log_area.append_log(f"账号数量: {code_info.get('usedAccounts', 0)}/{code_info.get('maxAccounts', 0)}")
+        
+        # 检查账号数量限制
+        max_accounts = code_info.get("maxAccounts", 0)
+        used_accounts = code_info.get("usedAccounts", 0)
+        
+        # 如果已用账号数已达到或超过最大账号数，禁用获取账号按钮
+        if used_accounts >= max_accounts and max_accounts > 0:
+            self.get_account_btn.setEnabled(False)
+            self.get_account_btn.setToolTip(f"已达到最大账号数限制 ({used_accounts}/{max_accounts})")
+            self.log_area.append_log(f"已达到最大账号数限制: {used_accounts}/{max_accounts}")
+        else:
+            self.get_account_btn.setEnabled(True)
+            self.get_account_btn.setToolTip("")
+            
+        return True 
