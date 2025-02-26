@@ -52,13 +52,17 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='ResertCursorPro',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=True,
@@ -68,28 +72,18 @@ exe = EXE(
     icon=['resources/icon.ico', 'resources/icon.icns'] if sys.platform == 'darwin' else 'resources/icon.ico'
 )
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='ResertCursorPro',
-)
-
-app = BUNDLE(
-    coll,
-    name='ResertCursorPro.app',
-    icon='resources/icon.icns' if sys.platform == 'darwin' else 'resources/icon.ico',
-    bundle_identifier='com.resertcursorpro.app',
-    info_plist={
-        'CFBundleShortVersionString': '1.0.0',
-        'CFBundleVersion': '1.0.0',
-        'NSHighResolutionCapable': 'True',
-        'LSMinimumSystemVersion': '10.13.0',
-        'NSPrincipalClass': 'NSApplication',
-        'NSAppleScriptEnabled': False,
-    },
-)
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        exe,
+        name='ResertCursorPro.app',
+        icon='resources/icon.icns',
+        bundle_identifier='com.resertcursorpro.app',
+        info_plist={
+            'CFBundleShortVersionString': '1.0.0',
+            'CFBundleVersion': '1.0.0',
+            'NSHighResolutionCapable': 'True',
+            'LSMinimumSystemVersion': '10.13.0',
+            'NSPrincipalClass': 'NSApplication',
+            'NSAppleScriptEnabled': False,
+        },
+    )
